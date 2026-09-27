@@ -173,7 +173,47 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
+      # Made from the packages as they are on the release, so the checksums are of what
+      # people download: a .sha256 beside each package, and all of them in SHA256SUMS.
+      - name: Add checksums
+        run: |
+          mkdir packages
+          cd packages
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern '*.zip' --pattern '*.tar.gz'
+          for package in '*-Windows.zip' '*-Linux.tar.gz' '*-macOS.zip'; do
+            set -- $package
+            if [ $# != 1 ] || [ ! -f "$1" ]; then
+              echo "::error::expected one package named $package on the release, but it has: $(ls | tr '\n' ' ')"
+              exit 1
+            fi
+          done
+          for f in *.zip *.tar.gz; do
+            sha256sum -b "$f" > "$f.sha256"
+          done
+          sha256sum -b *.zip *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+          sha256sum -c *.sha256
+          gh release upload "$GITHUB_REF_NAME" *.sha256 SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+
       - name: Publish the release
         run: |
           git clone -q --depth 1 --branch "$GITHUB_REF_NAME" "https://github.com/$GITHUB_REPOSITORY" src
-          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --notes-file src/.github/release/notes.md
+          # The notes, then how to check a download, then the commit of each tool the
+          # release was built with (from the tag's own tree: no submodule is fetched).
+          {
+            cat src/.github/release/notes.md
+            echo
+            echo "To check a download, put its \`.sha256\` file beside it and run \`sha256sum -c\` on it (on macOS, \`shasum -a 256 -c\`)."
+            echo
+            echo "Built from \`$GITHUB_SHA\` with:"
+            echo
+            echo "| Tool | Commit |"
+            echo "|---|---|"
+            git -C src submodule status | while read -r commit path rest; do
+              commit=${commit#[-+U ]}
+              url=$(git -C src config -f .gitmodules "submodule.$path.url")
+              echo "| \`$path\` | [\`$(echo "$commit" | cut -c1-12)\`](${url%.git}/commit/$commit) |"
+            done
+          } > notes.md
+          cat notes.md
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --notes-file notes.md
