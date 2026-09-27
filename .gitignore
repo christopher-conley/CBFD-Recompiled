@@ -27,5 +27,7 @@ __pycache__/
 /host/user_save.bin
 /.claude/
 /.venv/
+/.codegraph/
+/graphify-out/
 /tools/macos/
 /local/
